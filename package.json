@@ -1,0 +1,21 @@
+{
+  "name": "chilema-health-app",
+  "version": "1.0.0",
+  "description": "吃了吗 - 健康饮食与生活习惯 AI 建议网站（登录/注册/健康档案/AI 分析流式渲染）",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.13.1"
+  }
+}

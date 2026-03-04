@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>吃了吗 · 健康饮食 AI 顾问</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand">
+          <div class="brand-logo">🥗</div>
+          <div class="brand-text">
+            <div class="brand-title">吃了吗</div>
+            <div class="brand-subtitle">你的专属健康饮食与生活方式顾问</div>
+          </div>
+        </div>
+        <div class="user-info" id="user-info">
+          <span id="user-email" class="user-email"></span>
+          <button id="logout-btn" class="btn btn-ghost small hidden">退出登录</button>
+        </div>
+      </header>
+
+      <main class="app-main">
+        <section class="auth-card" id="auth-section">
+          <div class="auth-tabs">
+            <button id="tab-login" class="auth-tab active">登录</button>
+            <button id="tab-register" class="auth-tab">注册</button>
+          </div>
+
+          <form id="login-form" class="auth-form">
+            <div class="field">
+              <label>邮箱</label>
+              <input type="email" id="login-email" required placeholder="you@example.com" />
+            </div>
+            <div class="field">
+              <label>密码</label>
+              <input type="password" id="login-password" required placeholder="至少 6 位密码" />
+            </div>
+            <button type="submit" class="btn primary full">登录</button>
+            <div class="hint-text">没有账号？点击上方“注册”标签创建新账号</div>
+          </form>
+
+          <form id="register-form" class="auth-form hidden">
+            <div class="field">
+              <label>昵称（可选）</label>
+              <input type="text" id="register-name" placeholder="比如：爱吃菜的阿哲" />
+            </div>
+            <div class="field">
+              <label>邮箱</label>
+              <input type="email" id="register-email" required placeholder="you@example.com" />
+            </div>
+            <div class="field">
+              <label>密码</label>
+              <input type="password" id="register-password" required placeholder="至少 6 位密码" />
+            </div>
+            <button type="submit" class="btn primary full">注册并登录</button>
+            <div class="hint-text">注册成功后会自动登录，后续可以随时更新健康信息。</div>
+          </form>
+
+          <div class="auth-error" id="auth-error"></div>
+        </section>
+
+        <section class="main-card hidden" id="main-section">
+          <div class="panels">
+            <div class="panel left">
+              <h2>我的健康信息</h2>
+              <p class="panel-subtitle">这些信息只会保存在本网站数据库，用于更好地为你生成建议。</p>
+
+              <form id="health-form" class="health-form">
+                <div class="field two-columns">
+                  <div>
+                    <label>身高（cm）</label>
+                    <input type="number" step="0.1" id="height" placeholder="例如 170" />
+                  </div>
+                  <div>
+                    <label>体重（kg）</label>
+                    <input type="number" step="0.1" id="weight" placeholder="例如 60" />
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label>已有疾病史</label>
+                  <textarea id="diseases" rows="2" placeholder="例如：高血压、2 型糖尿病、脂肪肝等，没有可写“无”"></textarea>
+                </div>
+
+                <div class="field">
+                  <label>过敏史</label>
+                  <textarea id="allergies" rows="2" placeholder="例如：花生过敏、海鲜过敏等，没有可写“无”"></textarea>
+                </div>
+
+                <div class="field">
+                  <label>当前生活习惯</label>
+                  <textarea id="lifestyle" rows="3" placeholder="例如：久坐、经常外卖、熬夜、每周健身 2 次等"></textarea>
+                </div>
+
+                <div class="actions">
+                  <button type="submit" class="btn primary">保存健康档案</button>
+                  <button type="button" id="analyze-btn" class="btn secondary">
+                    使用 AI 分析并生成建议
+                  </button>
+                </div>
+
+                <div class="food-card">
+                  <div class="food-card-title">拍照识别食物</div>
+                  <div class="food-card-subtitle">
+                    上传或拍照你的食物，支持预览放大缩小与拖拽查看，然后让 AI 结合你的健康信息给建议。
+                  </div>
+
+                  <div class="food-actions">
+                    <input
+                      id="food-image-input"
+                      class="file-input"
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                    />
+                    <button type="button" id="food-analyze-btn" class="btn primary">
+                      识别食物并给建议（流式）
+                    </button>
+                    <button type="button" id="food-reset-view" class="btn btn-ghost small">
+                      重置预览
+                    </button>
+                  </div>
+
+                  <div class="image-viewer" id="image-viewer">
+                    <img id="food-preview" alt="食物预览" />
+                    <div class="image-viewer-hint" id="image-viewer-hint">
+                      提示：鼠标滚轮/触摸板可缩放，拖拽可移动；手机支持双指缩放。
+                    </div>
+                  </div>
+                </div>
+
+                <div class="hint-text" id="health-saved-hint"></div>
+              </form>
+            </div>
+
+            <div class="panel right">
+              <h2>AI 健康饮食 & 生活方式建议</h2>
+              <p class="panel-subtitle">
+                点击左侧“使用 AI 分析并生成建议”，这里会以流式方式逐字出现内容。
+              </p>
+
+              <div class="ai-output" id="ai-output"></div>
+              <div class="ai-status-row">
+                <div id="ai-status" class="ai-status"></div>
+                <button id="ai-clear" class="btn btn-ghost small">清空内容</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <span>吃了吗 · 个人健康饮食与生活方式小助手（示例站点，本内容不构成医疗建议）</span>
+      </footer>
+    </div>
+
+    <script src="./main.js"></script>
+  </body>
+</html>
+
