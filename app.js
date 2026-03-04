@@ -93,8 +93,11 @@ async function callAiApi(prompt) {
   }
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 9000); // 9s，在 Vercel 免费版 10s 限制前返回
     const resp = await fetch(baseUrl, {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`
@@ -112,6 +115,7 @@ async function callAiApi(prompt) {
         temperature: 0.7
       })
     });
+    clearTimeout(timeoutId);
 
     if (!resp.ok) {
       console.error('AI API 调用失败', await resp.text());
@@ -122,6 +126,9 @@ async function callAiApi(prompt) {
     const text = data.choices?.[0]?.message?.content?.trim();
     return text || 'AI 没有返回内容，请稍后重试。';
   } catch (err) {
+    if (err?.name === 'AbortError') {
+      return 'AI 响应超时，请稍后重试。（若使用 Vercel 免费版，单次请求约 10 秒限制）';
+    }
     console.error('调用 AI 出错', err);
     return '调用 AI 接口失败，请检查配置或稍后重试。';
   }
@@ -141,8 +148,11 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
   }
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 9000); // 9s，在 Vercel 免费版 10s 限制前返回
     const resp = await fetch(baseUrl, {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`
@@ -167,6 +177,7 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
         response_format: { type: 'json_object' }
       })
     });
+    clearTimeout(timeoutId);
 
     if (!resp.ok) {
       console.error('AI Vision API 调用失败', await resp.text());
@@ -201,6 +212,9 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
 
     return { foods, notes: parsed.notes || '', raw: parsed };
   } catch (err) {
+    if (err?.name === 'AbortError') {
+      return { foods: [], notes: 'AI 视觉识别超时，请稍后重试或换一张图。', raw: null };
+    }
     console.error('调用 AI 视觉出错', err);
     return { foods: [], notes: '调用 AI 视觉接口失败，请检查配置或稍后重试。', raw: null };
   }
