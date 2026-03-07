@@ -448,6 +448,56 @@ if (foodImageInput) {
   });
 }
 
+/** 将图片压缩为最长边不超过 maxSize 的 JPEG，减小上传体积、加快识别，避免超时 */
+function compressImageForUpload(file, maxSize = 1024, quality = 0.82) {
+  return new Promise((resolve) => {
+    if (!file || !file.type.startsWith('image/')) {
+      resolve(file);
+      return;
+    }
+    const img = new Image();
+    img.onerror = () => {
+      if (img.src) URL.revokeObjectURL(img.src);
+      resolve(file);
+    };
+    img.onload = () => {
+      let w = img.naturalWidth;
+      let h = img.naturalHeight;
+      if (w <= maxSize && h <= maxSize) {
+        if (img.src) URL.revokeObjectURL(img.src);
+        resolve(file);
+        return;
+      }
+      if (w > h) {
+        h = Math.round((h * maxSize) / w);
+        w = maxSize;
+      } else {
+        w = Math.round((w * maxSize) / h);
+        h = maxSize;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        if (img.src) URL.revokeObjectURL(img.src);
+        resolve(file);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (blob) => {
+          if (img.src) URL.revokeObjectURL(img.src);
+          resolve(blob ? new File([blob], file.name || 'food.jpg', { type: 'image/jpeg' }) : file);
+        },
+        'image/jpeg',
+        quality
+      );
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 async function foodAnalyzeWithStreaming() {
   if (!token) {
     aiStatus.textContent = '请先登录';
@@ -468,8 +518,10 @@ async function foodAnalyzeWithStreaming() {
   const allergies = $('allergies').value.trim();
   const lifestyle = $('lifestyle').value.trim();
 
+  const imageToSend = await compressImageForUpload(file);
+
   const form = new FormData();
-  form.append('image', file, file.name || 'food.jpg');
+  form.append('image', imageToSend, imageToSend.name || 'food.jpg');
   if (height_cm !== null) form.append('height_cm', String(height_cm));
   if (weight_kg !== null) form.append('weight_kg', String(weight_kg));
   form.append('diseases', diseases);

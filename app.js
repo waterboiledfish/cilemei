@@ -279,9 +279,11 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
     };
   }
 
+  const visionTimeoutMs = Math.min(9500, parseInt(process.env.AI_VISION_TIMEOUT_MS || '9500', 10) || 9500);
+
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 9000); // 9s，在 Vercel 免费版 10s 限制前返回
+    const timeoutId = setTimeout(() => controller.abort(), visionTimeoutMs);
     const resp = await fetch(baseUrl, {
       method: 'POST',
       signal: controller.signal,
@@ -295,7 +297,7 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
           {
             role: 'system',
             content:
-              '你是中文营养与膳食识别助手。从图片中识别食物/饮品，尽量给出具体品类（如“清蒸鲈鱼”“拿铁咖啡”）。根据用户健康档案给出饮食建议。只输出一段合法 JSON，键名使用英文：foods、nutrition_notes、advice、cautions。advice 为字符串数组；无特别提醒时 cautions 写空字符串 ""，不要重复 cautions 键。'
+              '识别图片中的食物/饮品，给出具体品类。输出唯一一段合法JSON，键名英文：foods(数组)、nutrition_notes(字符串)、advice(字符串数组)、cautions(字符串，无则"")。不要重复cautions键。'
           },
           {
             role: 'user',
@@ -550,23 +552,7 @@ function createApiApp() {
     const base64 = req.file.buffer.toString('base64');
     const dataUrl = `data:${mime};base64,${base64}`;
 
-    const visionPrompt = `
-你将收到一张用户拍摄的食物图片，以及用户健康档案。请只输出一段合法 JSON，不要用 markdown 代码块包裹，不要输出多余说明。格式必须为：
-{
-  "foods": ["识别到的食物1", "识别到的食物2"],
-  "nutrition_notes": "简短说明这顿可能的营养结构与风险点",
-  "advice": ["建议一", "建议二", "建议三"],
-  "cautions": "针对疾病史/过敏史的特别提醒，没有则写空字符串"
-}
-其中 foods 和 advice 必须是字符串数组；cautions 没有时写 ""，不要重复多个 cautions 键。
-
-用户健康信息：
-- 身高：${height_cm || '未填写'} cm
-- 体重：${weight_kg || '未填写'} kg
-- 已知疾病史：${diseases || '未填写'}
-- 过敏史：${allergies || '未填写'}
-- 当前生活习惯：${lifestyle || '未填写'}
-`;
+    const visionPrompt = `JSON格式：{"foods":["食物1","食物2"],"nutrition_notes":"营养说明","advice":["建议1","建议2"],"cautions":""}。用户：身高${height_cm || '-'}cm 体重${weight_kg || '-'}kg 疾病${(diseases || '-').slice(0, 80)} 过敏${(allergies || '-').slice(0, 80)} 习惯${(lifestyle || '-').slice(0, 80)}`;
 
     const vision = await callAiVisionApi({ prompt: visionPrompt, imageBase64DataUrl: dataUrl });
     const foodsList = (vision.foods || []).filter(Boolean);
