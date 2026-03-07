@@ -144,6 +144,97 @@ async function callAiApi(prompt) {
   }
 }
 
+/** 将 advice 转为展示用文本：数组则分条编号，字符串若为 JSON 则尝试解析后分条，否则直接使用 */
+function formatAdviceForDisplay(advice, fallbackNotes) {
+  if (Array.isArray(advice)) {
+    const list = advice.filter((x) => x != null && String(x).trim() !== '');
+    return list.length ? list.map((x, i) => `${i + 1}. ${String(x).trim()}`).join('\n') : (fallbackNotes || '暂无建议');
+  }
+  if (typeof advice === 'string') {
+    const s = advice.trim();
+    if (!s) return fallbackNotes || '暂无建议';
+    if (s.startsWith('{') || s.startsWith('[')) {
+      try {
+        const obj = JSON.parse(s);
+        const arr = obj.advice || obj.recommendations;
+        if (Array.isArray(arr)) {
+          const list = arr.filter((x) => x != null && String(x).trim() !== '');
+          return list.length ? list.map((x, i) => `${i + 1}. ${String(x).trim()}`).join('\n') : s;
+        }
+      } catch {
+        // 解析失败则不用整段 JSON 当建议，用 fallback
+        return fallbackNotes || '暂无建议';
+      }
+    }
+    return s;
+  }
+  return fallbackNotes || '暂无建议';
+}
+
+/** 规范视觉接口返回的 raw：advice 统一为数组或字符串，cautions 只保留一条非空字符串 */
+function normalizeVisionRaw(parsed) {
+  if (!parsed || typeof parsed !== 'object') return {};
+  const raw = { ...parsed };
+  // advice：数组则保留，字符串则保留（前端会按字符串展示）
+  if (Array.isArray(raw.advice)) {
+    raw.advice = raw.advice.filter((x) => x != null && String(x).trim() !== '');
+  } else if (typeof raw.advice === 'string') {
+    raw.advice = raw.advice.trim();
+  }
+  // cautions：只保留一条非空字符串，避免模型返回多个 "cautions": "" 造成刷屏
+  let cautions = raw.cautions;
+  if (Array.isArray(cautions)) {
+    cautions = cautions.find((c) => String(c).trim()) ?? '';
+  }
+  raw.cautions = typeof cautions === 'string' ? cautions.trim() : '';
+  return raw;
+}
+
+/** JSON 解析失败时，从原始文本中抽取 foods / nutrition_notes / advice / cautions，避免整段原始 JSON 展示给用户 */
+function parseVisionTextFallback(text) {
+  const foods = [];
+  const foodsMatch = text.match(/"foods"\s*:\s*\[([\s\S]*?)\]/);
+  if (foodsMatch && foodsMatch[1]) {
+    foodsMatch[1]
+      .split(',')
+      .map((s) => s.replace(/[\[\]"]/g, '').trim())
+      .filter(Boolean)
+      .forEach((item) => foods.push(item));
+  }
+
+  let nutrition_notes = '';
+  const notesMatch = text.match(/"nutrition_notes"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (notesMatch && notesMatch[1]) nutrition_notes = notesMatch[1].replace(/\\"/g, '"').trim();
+
+  let advice = [];
+  const adviceArrMatch = text.match(/"advice"\s*:\s*\[([\s\S]*?)\]/);
+  if (adviceArrMatch && adviceArrMatch[1]) {
+    advice = adviceArrMatch[1]
+      .split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
+      .map((s) => s.replace(/^[\s"]+|[\s"]+$/g, '').replace(/^"|"$/g, '').replace(/\\"/g, '"').trim())
+      .filter(Boolean);
+  } else {
+    const adviceStrMatch = text.match(/"advice"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (adviceStrMatch && adviceStrMatch[1]) {
+      const s = adviceStrMatch[1].replace(/\\"/g, '"').trim();
+      if (s) advice = [s];
+    }
+  }
+
+  let cautions = '';
+  const cautionsMatch = text.match(/"cautions"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (cautionsMatch && cautionsMatch[1]) {
+    const c = cautionsMatch[1].replace(/\\"/g, '"').trim();
+    if (c) cautions = c;
+  }
+
+  return {
+    foods,
+    notes: '',
+    raw: { foods, nutrition_notes, advice: advice.length ? advice : ['暂无建议'], cautions }
+  };
+}
+
 async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
   const baseUrl = process.env.AI_API_BASE_URL;
   const apiKey = process.env.AI_API_KEY;
@@ -202,16 +293,7 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
     try {
       parsed = JSON.parse(text);
     } catch {
-      const foods = [];
-      const foodsMatch = text.match(/"foods"\s*:\s*\[([\s\S]*?)\]/);
-      if (foodsMatch && foodsMatch[1]) {
-        foodsMatch[1]
-          .split(',')
-          .map((s) => s.replace(/[\[\]"]/g, '').trim())
-          .filter(Boolean)
-          .forEach((item) => foods.push(item));
-      }
-      return { foods, notes: '', raw: { advice: text } };
+      return parseVisionTextFallback(text);
     }
 
     const foods = Array.isArray(parsed.foods)
@@ -220,7 +302,7 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
         ? parsed.items
         : [];
 
-    return { foods, notes: parsed.notes || '', raw: parsed };
+    return { foods, notes: parsed.notes || '', raw: normalizeVisionRaw(parsed) };
   } catch (err) {
     if (err?.name === 'AbortError') {
       return { foods: [], notes: 'AI 视觉识别超时，请稍后重试或换一张图。', raw: null };
@@ -454,11 +536,9 @@ function createApiApp() {
     const foodsList = (vision.foods || []).filter(Boolean);
 
     const raw = vision.raw || {};
-    const nutritionNotes = Array.isArray(raw.nutrition_notes) ? raw.nutrition_notes.join('\n') : raw.nutrition_notes || '';
-    const adviceText = Array.isArray(raw.advice)
-      ? raw.advice.map((x, i) => `${i + 1}. ${x}`).join('\n')
-      : raw.advice || vision.notes || '暂无建议';
-    const cautionsText = Array.isArray(raw.cautions) ? raw.cautions.join('\n') : raw.cautions || '';
+    const nutritionNotes = Array.isArray(raw.nutrition_notes) ? raw.nutrition_notes.join('\n') : (raw.nutrition_notes || '').trim();
+    const adviceText = formatAdviceForDisplay(raw.advice, vision.notes);
+    const cautionsText = (Array.isArray(raw.cautions) ? raw.cautions.join('\n') : (raw.cautions || '').trim()).trim();
 
     const finalText =
       `识别到的食物：${foodsList.length ? foodsList.join('、') : '（未能识别）'}\n` +
