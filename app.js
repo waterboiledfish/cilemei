@@ -144,6 +144,46 @@ async function callAiApi(prompt) {
   }
 }
 
+/** 去掉可能的 markdown 代码块包裹，便于后续 JSON.parse */
+function stripJsonCodeBlock(str) {
+  if (typeof str !== 'string') return str;
+  const s = str.trim();
+  const codeBlock = /^```(?:json)?\s*([\s\S]*?)```\s*$/;
+  const m = s.match(codeBlock);
+  return m ? m[1].trim() : s;
+}
+
+/** 从解析后的对象中取出统一字段（支持中英 key），供展示用 */
+function toCanonicalVisionRaw(parsed) {
+  if (!parsed || typeof parsed !== 'object') return {};
+  const foods = parsed.foods ?? parsed.items ?? parsed.食物 ?? parsed.food_list ?? parsed.识别结果;
+  const arr = Array.isArray(foods) ? foods : [];
+  const foodList = arr.filter((x) => x != null && String(x).trim() !== '').map((x) => String(x).trim());
+
+  const nutrition_notes =
+    parsed.nutrition_notes ?? parsed.notes ?? parsed.营养说明 ?? parsed.营养 ?? '';
+  const notesStr = Array.isArray(nutrition_notes) ? nutrition_notes.join('\n') : String(nutrition_notes || '').trim();
+
+  let advice = parsed.advice ?? parsed.建议 ?? parsed.recommendations ?? parsed.饮食建议;
+  if (Array.isArray(advice)) {
+    advice = advice.filter((x) => x != null && String(x).trim() !== '').map((x) => String(x).trim());
+  } else if (typeof advice === 'string') {
+    advice = advice.trim() ? [advice.trim()] : [];
+  } else {
+    advice = [];
+  }
+
+  let cautions = parsed.cautions ?? parsed.提醒 ?? parsed.注意事项 ?? '';
+  const cautionsStr = Array.isArray(cautions) ? cautions.join('\n') : String(cautions || '').trim();
+
+  return {
+    foods: foodList,
+    nutrition_notes: notesStr,
+    advice: advice.length ? advice : ['暂无建议'],
+    cautions: cautionsStr
+  };
+}
+
 /** 将 advice 转为展示用文本：数组则分条编号，字符串若为 JSON 则尝试解析后分条，否则直接使用 */
 function formatAdviceForDisplay(advice, fallbackNotes) {
   if (Array.isArray(advice)) {
@@ -171,50 +211,41 @@ function formatAdviceForDisplay(advice, fallbackNotes) {
   return fallbackNotes || '暂无建议';
 }
 
-/** 规范视觉接口返回的 raw：advice 统一为数组或字符串，cautions 只保留一条非空字符串 */
-function normalizeVisionRaw(parsed) {
-  if (!parsed || typeof parsed !== 'object') return {};
-  const raw = { ...parsed };
-  // advice：数组则保留，字符串则保留（前端会按字符串展示）
-  if (Array.isArray(raw.advice)) {
-    raw.advice = raw.advice.filter((x) => x != null && String(x).trim() !== '');
-  } else if (typeof raw.advice === 'string') {
-    raw.advice = raw.advice.trim();
-  }
-  // cautions：只保留一条非空字符串，避免模型返回多个 "cautions": "" 造成刷屏
-  let cautions = raw.cautions;
-  if (Array.isArray(cautions)) {
-    cautions = cautions.find((c) => String(c).trim()) ?? '';
-  }
-  raw.cautions = typeof cautions === 'string' ? cautions.trim() : '';
-  return raw;
-}
-
-/** JSON 解析失败时，从原始文本中抽取 foods / nutrition_notes / advice / cautions，避免整段原始 JSON 展示给用户 */
+/** JSON 解析失败时，从原始文本中抽取 foods / nutrition_notes / advice / cautions（支持中英 key），避免整段原始 JSON 展示 */
 function parseVisionTextFallback(text) {
   const foods = [];
-  const foodsMatch = text.match(/"foods"\s*:\s*\[([\s\S]*?)\]/);
-  if (foodsMatch && foodsMatch[1]) {
-    foodsMatch[1]
-      .split(',')
-      .map((s) => s.replace(/[\[\]"]/g, '').trim())
-      .filter(Boolean)
-      .forEach((item) => foods.push(item));
+  const foodKeys = ['"foods"', '"食物"', '"food_list"', '"识别结果"', '"items"'];
+  for (const key of foodKeys) {
+    const m = text.match(new RegExp(key + '\\s*:\\s*\\[([\\s\\S]*?)\\]'));
+    if (m && m[1]) {
+      m[1]
+        .split(',')
+        .map((s) => s.replace(/[\[\]"]/g, '').trim())
+        .filter(Boolean)
+        .forEach((item) => foods.push(item));
+      break;
+    }
   }
 
   let nutrition_notes = '';
-  const notesMatch = text.match(/"nutrition_notes"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-  if (notesMatch && notesMatch[1]) nutrition_notes = notesMatch[1].replace(/\\"/g, '"').trim();
+  const notesKeys = ['"nutrition_notes"', '"notes"', '"营养说明"', '"营养"'];
+  for (const key of notesKeys) {
+    const notesMatch = text.match(new RegExp(key + '\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'));
+    if (notesMatch && notesMatch[1]) {
+      nutrition_notes = notesMatch[1].replace(/\\"/g, '"').trim();
+      break;
+    }
+  }
 
   let advice = [];
-  const adviceArrMatch = text.match(/"advice"\s*:\s*\[([\s\S]*?)\]/);
+  const adviceArrMatch = text.match(/"advice"\s*:\s*\[([\s\S]*?)\]/) || text.match(/"建议"\s*:\s*\[([\s\S]*?)\]/);
   if (adviceArrMatch && adviceArrMatch[1]) {
     advice = adviceArrMatch[1]
       .split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
       .map((s) => s.replace(/^[\s"]+|[\s"]+$/g, '').replace(/^"|"$/g, '').replace(/\\"/g, '"').trim())
       .filter(Boolean);
   } else {
-    const adviceStrMatch = text.match(/"advice"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    const adviceStrMatch = text.match(/"advice"\s*:\s*"((?:[^"\\]|\\.)*)"/) || text.match(/"建议"\s*:\s*"((?:[^"\\]|\\.)*)"/);
     if (adviceStrMatch && adviceStrMatch[1]) {
       const s = adviceStrMatch[1].replace(/\\"/g, '"').trim();
       if (s) advice = [s];
@@ -222,7 +253,7 @@ function parseVisionTextFallback(text) {
   }
 
   let cautions = '';
-  const cautionsMatch = text.match(/"cautions"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const cautionsMatch = text.match(/"cautions"\s*:\s*"((?:[^"\\]|\\.)*)"/) || text.match(/"提醒"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   if (cautionsMatch && cautionsMatch[1]) {
     const c = cautionsMatch[1].replace(/\\"/g, '"').trim();
     if (c) cautions = c;
@@ -264,7 +295,7 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
           {
             role: 'system',
             content:
-              '你是一个中文营养与膳食识别助手。请先从图片中识别食物/饮品，尽量给出具体品类（如“清蒸鲈鱼”“拿铁咖啡”“宫保鸡丁”），然后根据用户健康档案提供饮食建议。输出必须是 JSON。'
+              '你是中文营养与膳食识别助手。从图片中识别食物/饮品，尽量给出具体品类（如“清蒸鲈鱼”“拿铁咖啡”）。根据用户健康档案给出饮食建议。只输出一段合法 JSON，键名使用英文：foods、nutrition_notes、advice、cautions。advice 为字符串数组；无特别提醒时 cautions 写空字符串 ""，不要重复 cautions 键。'
           },
           {
             role: 'user',
@@ -286,9 +317,10 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
     }
 
     const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content?.trim();
+    let text = data.choices?.[0]?.message?.content?.trim();
     if (!text) return { foods: [], notes: 'AI 未返回内容', raw: data };
 
+    text = stripJsonCodeBlock(text);
     let parsed = null;
     try {
       parsed = JSON.parse(text);
@@ -296,13 +328,16 @@ async function callAiVisionApi({ prompt, imageBase64DataUrl }) {
       return parseVisionTextFallback(text);
     }
 
-    const foods = Array.isArray(parsed.foods)
-      ? parsed.foods
-      : Array.isArray(parsed.items)
-        ? parsed.items
-        : [];
-
-    return { foods, notes: parsed.notes || '', raw: normalizeVisionRaw(parsed) };
+    const canonical = toCanonicalVisionRaw(parsed);
+    return {
+      foods: canonical.foods,
+      notes: canonical.nutrition_notes,
+      raw: {
+        nutrition_notes: canonical.nutrition_notes,
+        advice: canonical.advice,
+        cautions: canonical.cautions
+      }
+    };
   } catch (err) {
     if (err?.name === 'AbortError') {
       return { foods: [], notes: 'AI 视觉识别超时，请稍后重试或换一张图。', raw: null };
@@ -516,13 +551,14 @@ function createApiApp() {
     const dataUrl = `data:${mime};base64,${base64}`;
 
     const visionPrompt = `
-你将收到一张用户拍摄的食物图片，以及用户健康档案。请输出 JSON，格式如下：
+你将收到一张用户拍摄的食物图片，以及用户健康档案。请只输出一段合法 JSON，不要用 markdown 代码块包裹，不要输出多余说明。格式必须为：
 {
   "foods": ["识别到的食物1", "识别到的食物2"],
-  "nutrition_notes": "简短说明这顿可能的营养结构与风险点（如高盐高油/高糖/缺少蔬菜等）",
-  "advice": "给用户的饮食建议与生活习惯建议，要求分点、具体可执行",
-  "cautions": "针对疾病史/过敏史的特别提醒（如果没有就写空字符串）"
+  "nutrition_notes": "简短说明这顿可能的营养结构与风险点",
+  "advice": ["建议一", "建议二", "建议三"],
+  "cautions": "针对疾病史/过敏史的特别提醒，没有则写空字符串"
 }
+其中 foods 和 advice 必须是字符串数组；cautions 没有时写 ""，不要重复多个 cautions 键。
 
 用户健康信息：
 - 身高：${height_cm || '未填写'} cm
