@@ -31,6 +31,9 @@ const imageViewerHint = $('image-viewer-hint');
 const foodAnalyzeBtn = $('food-analyze-btn');
 const foodResetViewBtn = $('food-reset-view');
 
+const historyLoadBtn = $('history-load-btn');
+const historyListEl = $('history-list');
+
 let token = localStorage.getItem('chilema_token') || '';
 
 function setAuthToken(newToken, user) {
@@ -268,6 +271,7 @@ async function analyzeWithStreaming() {
     }
 
     aiStatus.textContent = '生成完成 ✅';
+    loadHistory();
   } catch (err) {
     console.error(err);
     aiStatus.textContent = '分析失败：' + (err.message || '请稍后重试');
@@ -501,6 +505,7 @@ async function foodAnalyzeWithStreaming() {
     }
 
     aiStatus.textContent = '识别与建议生成完成 ✅';
+    loadHistory();
   } catch (err) {
     console.error(err);
     aiStatus.textContent = '识别失败：' + (err.message || '请稍后重试');
@@ -509,6 +514,48 @@ async function foodAnalyzeWithStreaming() {
 
 if (foodAnalyzeBtn) {
   foodAnalyzeBtn.addEventListener('click', () => foodAnalyzeWithStreaming());
+}
+
+async function loadHistory() {
+  if (!token || !historyListEl) return;
+  try {
+    const data = await apiFetch('/api/advice-history?limit=20');
+    historyListEl.innerHTML = '';
+    if (!data.list || data.list.length === 0) {
+      historyListEl.innerHTML = '<div class="history-item" style="cursor:default;opacity:0.8">暂无历史记录，生成一次建议后会自动出现在这里。</div>';
+      return;
+    }
+    data.list.forEach((item) => {
+      const div = document.createElement('button');
+      div.type = 'button';
+      div.className = 'history-item';
+      const dateStr = item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : '';
+      div.innerHTML =
+        '<span class="history-item-meta">' +
+        (item.type === 'food' ? '📷 拍照识别' : '📝 文字建议') +
+        ' · ' +
+        dateStr +
+        '</span>' +
+        '<span class="history-item-preview">' +
+        (item.content_preview || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+        '</span>';
+      div.addEventListener('click', () => {
+        if (aiOutput) {
+          aiOutput.textContent = item.content || '';
+          aiOutput.scrollTop = 0;
+        }
+        if (aiStatus) aiStatus.textContent = '已从历史加载';
+      });
+      historyListEl.appendChild(div);
+    });
+  } catch (err) {
+    console.warn('加载建议历史失败', err);
+    if (historyListEl) historyListEl.innerHTML = '<div class="history-item" style="cursor:default;opacity:0.8">加载失败，请稍后重试。</div>';
+  }
+}
+
+if (historyLoadBtn) {
+  historyLoadBtn.addEventListener('click', () => loadHistory());
 }
 
 window.addEventListener('load', async () => {

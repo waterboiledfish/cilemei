@@ -56,6 +56,16 @@ async function initDatabase() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS advice_history (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
   })();
   return initPromise;
 }
@@ -362,6 +372,15 @@ function createApiApp() {
     res.setHeader('Transfer-Encoding', 'chunked');
 
     const advice = await callAiApi(prompt);
+    try {
+      const p = getPool();
+      await p.query(
+        'INSERT INTO advice_history (user_id, type, content) VALUES ($1, $2, $3)',
+        [req.user.id, 'text', advice]
+      );
+    } catch (e) {
+      console.error('保存建议历史失败', e);
+    }
     const chunks = advice.split(/(\n\n|\n)/);
     for (const chunk of chunks) {
       if (!chunk) continue;
@@ -370,6 +389,39 @@ function createApiApp() {
       await new Promise((r) => setTimeout(r, 120));
     }
     res.end();
+  });
+
+  // ===== 建议历史列表 =====
+  app.get('/api/advice-history', authMiddleware, async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 20, 50);
+    const offset = Number(req.query.offset) || 0;
+    try {
+      const p = getPool();
+      const listRes = await p.query(
+        `SELECT id, type, content, created_at
+         FROM advice_history
+         WHERE user_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [req.user.id, limit, offset]
+      );
+      const countRes = await p.query(
+        'SELECT COUNT(*) AS total FROM advice_history WHERE user_id = $1',
+        [req.user.id]
+      );
+      const total = parseInt(countRes.rows[0].total, 10);
+      const list = listRes.rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        content: row.content,
+        content_preview: row.content ? row.content.slice(0, 120) + (row.content.length > 120 ? '…' : '') : '',
+        created_at: row.created_at
+      }));
+      return res.json({ list, total });
+    } catch (err) {
+      console.error('获取建议历史失败', err);
+      return res.status(500).json({ error: '获取建议历史失败' });
+    }
   });
 
   // ===== Food image analyze (stream) =====
@@ -413,6 +465,16 @@ function createApiApp() {
       (nutritionNotes ? `\n营养结构提示：\n${nutritionNotes}\n` : '') +
       `\n建议：\n${adviceText}\n` +
       (cautionsText ? `\n特别提醒：\n${cautionsText}\n` : '');
+
+    try {
+      const p = getPool();
+      await p.query(
+        'INSERT INTO advice_history (user_id, type, content) VALUES ($1, $2, $3)',
+        [req.user.id, 'food', finalText]
+      );
+    } catch (e) {
+      console.error('保存建议历史失败', e);
+    }
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Transfer-Encoding', 'chunked');
