@@ -254,7 +254,7 @@ async function analyzeWithStreaming() {
       throw new Error(msg || 'AI 分析请求失败');
     }
 
-    aiStatus.textContent = 'AI 正在生成建议（流式输出中）...';
+    aiStatus.textContent = 'AI 正在生成建议...';
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder('utf-8');
